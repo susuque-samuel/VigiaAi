@@ -35,8 +35,9 @@ Inicie o sistema:
 .\.venv\Scripts\python.exe main.py
 ```
 
-Abra <http://127.0.0.1:5000>, escolha a câmera no painel e clique em iniciar.
-Os índices de câmera podem mudar entre computadores. Não é necessário ativar
+Abra <http://127.0.0.1:5000> e clique em iniciar. Para escolher a câmera,
+ajuste `CAMERA_INDEX` no `.env` e reinicie o servidor. Os índices podem mudar
+entre computadores. Não é necessário ativar
 a `.venv` nem alterar a política de execução do PowerShell.
 
 Os comandos acima instalam PyTorch para **CPU**. Uma placa NVIDIA só será
@@ -44,11 +45,33 @@ usada com uma instalação de PyTorch/CUDA compatível com a placa e seu driver;
 não basta transferir o código. Consulte o [instalador oficial do PyTorch](https://pytorch.org/get-started/locally/)
 antes de alterar as versões de `torch` e `torchvision` deste projeto.
 
+## Atualizar o sistema em outro computador
+
+Pare o servidor com `Ctrl+C` antes de atualizar. Dentro de um clone deste
+repositório, sem alterações locais pendentes:
+
+```powershell
+git pull --ff-only
+.\.venv\Scripts\python.exe main.py
+```
+
+Depois atualize a página com `Ctrl+F5`. O `.env` e `config_epi.json` privados
+permanecem no computador. Se você alterou arquivos de código manualmente,
+preserve suas alterações antes de atualizar; não use comandos de descarte.
+Para instalações baixadas em ZIP, extraia a versão nova em outra pasta e
+transfira apenas o `.env` e a configuração privada, recriando a `.venv` nela.
+
+O ajuste de 20/10/2026 corrige a classificação de posturas ambíguas, melhora
+o enquadramento da pose e considera a duração do processamento na confirmação.
+O painel mostra a inclinação estimada e o progresso de confirmação da possível
+queda. Não houve mudança das dependências nem dos pesos nesta correção.
+Leia os limites e testes em [Monitoramento e coleta](MONITORAMENTO_E_COLETA.md#correção-da-avaliação-de-quedas-em-20102026).
+
 ## Configurar o `.env`
 
 | Variável | Conteúdo |
 | --- | --- |
-| `CAMERA_INDEX` | Índice inicial da câmera, como `0`, `1` ou `2`. O painel permite escolher outro. |
+| `CAMERA_INDEX` | Índice da câmera, como `0`, `1` ou `2`. Reinicie o servidor após alterar. |
 | `COOLDOWN_SEGUNDOS` | Intervalo mínimo entre alertas da mesma pessoa, tipo e EPI. |
 | `EPI_CONFIRMACAO_SEGUNDOS` | Tempo inicial para confirmar uma possível ausência. A política salva no painel tem prioridade. |
 | `QUEDA_CONFIRMACAO_SEGUNDOS` | Tempo para confirmar a postura deitada antes do alerta de possível queda. |

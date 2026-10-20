@@ -114,4 +114,12 @@ test("controles, confirmação por pessoa e coleta usando o JavaScript do painel
   await executar("acao('/coletar-amostra', {})");
   assert.match(elementos.get("feedback").textContent, /Inicie a câmera/);
   assert.match(elementos.get("feedback").className, /erro/);
+  executar("mostrarPessoas([{id:9,postura:'Deitada',postura_angulo:75,epis:{},queda_confirmada:false,queda_quadros:2,queda_observada_segundos:1,queda_confirmacao_segundos:2}])");
+  let card = elementos.get("pessoas").children[0];
+  assert.match(card.children[0].textContent, /Deitada/);
+  assert.match(card.children.at(-1).textContent, /75°.*2\/3 quadros.*1\/2 segundos/);
+  executar("mostrarPessoas([{id:9,postura:null,postura_angulo:null,postura_motivo:'Ombros sem visibilidade suficiente.',epis:{}}])");
+  card = elementos.get("pessoas").children[0];
+  assert.match(card.children[0].textContent, /Postura inconclusiva/);
+  assert.match(card.children.at(-1).textContent, /Ombros sem visibilidade/);
 });

@@ -16,7 +16,10 @@ from uuid import uuid4
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
-from epi_monitoramento import EPIS, MotorAlertas, classificar_postura, enriquecer_rosto, identificar_epi
+from epi_monitoramento import (
+    EPIS, MotorAlertas, classificar_postura, enriquecer_rosto, identificar_epi,
+    mapear_pontos_pose, regiao_pose,
+)
 
 BASE = Path(__file__).resolve().parent
 
@@ -128,7 +131,7 @@ class Monitor:
             "epi_ativo": False, "epi_erro": None, "epis_suportados": [],
             "oculos_ativo": False, "oculos_erro": None,
             "modelo_oculos": str(self.modelo_oculos.relative_to(BASE)) if self.modelo_oculos and self.modelo_oculos.is_relative_to(BASE) else (self.modelo_oculos.name if self.modelo_oculos else None),
-            "aviso": None,
+            "aviso": None, "aviso_desempenho": None, "processamento_segundos": 0,
         }
 
     def configurar_epi(self, itens, segundos=None):
@@ -162,7 +165,8 @@ class Monitor:
             self.frame = self.frame_original = self.frame_instante = None
             self.status.update(executando=True, estado="iniciando", mensagem="Abrindo câmera e carregando modelos.",
                                deteccoes=[], epi_ativo=False, epi_erro=None, epis_suportados=[],
-                               oculos_ativo=False, oculos_erro=None, aviso=None, fps=0)
+                               oculos_ativo=False, oculos_erro=None, aviso=None,
+                               aviso_desempenho=None, processamento_segundos=0, fps=0)
             self.thread = threading.Thread(target=self.executar, daemon=True)
             self.thread.start()
         return True, "Inicialização solicitada."
@@ -190,13 +194,23 @@ class Monitor:
             self.status.update(epi_ativo=auxiliar_ativo, epi_erro=mensagem,
                                epis_suportados=["oculos"] if auxiliar_ativo else [])
 
-    def processar_deteccoes(self, quadro, caixas, pontos, deteccoes_epi, agora=None):
+    def processar_deteccoes(self, quadro, caixas, pontos, deteccoes_epi, agora=None,
+                           processamento_segundos=None):
         """Ponto de integração testável, sem acessar câmera ou enviar e-mail."""
         agora = time.monotonic() if agora is None else agora
         with self.lock:
             suportados = set(self.status["epis_suportados"]) if self.status["epi_ativo"] else set()
+            if processamento_segundos is not None:
+                self.status["processamento_segundos"] = round(processamento_segundos, 2)
+                self.status["aviso_desempenho"] = (
+                    f"Processamento lento ({processamento_segundos:.1f} s/quadro). "
+                    "A confirmação exige três observações e pode demorar mais; "
+                    "intervalos acima de 10 s interrompem a confirmação."
+                    if processamento_segundos > 2 else None
+                )
             return self.motor.avaliar(
-                caixas, pontos, deteccoes_epi, self.epi_obrigatorio, suportados, quadro.shape, agora
+                caixas, pontos, deteccoes_epi, self.epi_obrigatorio, suportados, quadro.shape, agora,
+                processamento_segundos=processamento_segundos,
             )
 
     def _publicar_frame(self, original, anotado, pessoas, fps):
@@ -346,6 +360,7 @@ class Monitor:
                         self.stop.wait(0.2)
                         continue
                     falhas = 0
+                    capturado_em = time.monotonic()
                     original = cv2.flip(quadro, 1)
                     caixas = []
                     pontos = []
@@ -361,9 +376,12 @@ class Monitor:
                             caixas.append(caixa)
                             recorte = original[y1:y2, x1:x2]
                             rgb = cv2.cvtColor(recorte, cv2.COLOR_BGR2RGB)
-                            resultado_pose = pose.process(rgb)
+                            recorte_pose = regiao_pose(caixa, original.shape)
+                            px1, py1, px2, py2 = recorte_pose
+                            rgb_pose = cv2.cvtColor(original[py1:py2, px1:px2], cv2.COLOR_BGR2RGB)
+                            resultado_pose = pose.process(rgb_pose)
                             landmarks = (
-                                {i: (p.x, p.y, p.visibility) for i, p in enumerate(resultado_pose.pose_landmarks.landmark)}
+                                mapear_pontos_pose(resultado_pose.pose_landmarks.landmark, recorte_pose, caixa)
                                 if resultado_pose.pose_landmarks else {}
                             )
                             if "oculos" in obrigatorios:
@@ -425,15 +443,19 @@ class Monitor:
                             suportados.add("oculos")
                         self.status.update(epi_ativo=bool(suportados), epis_suportados=sorted(suportados),
                                            oculos_ativo=modelo_oculos is not None)
-                    agora = time.monotonic()
-                    pessoas, alertas = self.processar_deteccoes(original, caixas, pontos, deteccoes_epi, agora)
+                    processamento = time.monotonic() - capturado_em
+                    agora = capturado_em
+                    pessoas, alertas = self.processar_deteccoes(
+                        original, caixas, pontos, deteccoes_epi, agora,
+                        processamento_segundos=processamento,
+                    )
                     anotado = original.copy()
                     for pessoa in pessoas:
                         alerta = pessoa["queda_confirmada"] or pessoa["epi_faltando"]
                         cor = (50, 70, 230) if alerta else (70, 190, 100)
                         x1, y1, x2, y2 = pessoa["caixa"]
                         cv2.rectangle(anotado, (x1, y1), (x2, y2), cor, 2)
-                        texto = f"Pessoa {pessoa['id']} | {pessoa['postura'] or 'Postura nao avaliada'}"
+                        texto = f"Pessoa {pessoa['id']} | {pessoa['postura'] or 'Postura inconclusiva'}"
                         if pessoa["epi_faltando"]:
                             texto += " | Possivel ausencia: " + ", ".join(pessoa["epi_faltando"])
                         cv2.putText(anotado, texto, (x1, max(24, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, cor, 2)
@@ -447,7 +469,8 @@ class Monitor:
             if camera is not None:
                 camera.release()
             with self.lock:
-                self.status.update(executando=False, epi_ativo=False, oculos_ativo=False, fps=0)
+                self.status.update(executando=False, epi_ativo=False, oculos_ativo=False,
+                                   aviso_desempenho=None, fps=0)
                 if self.status["estado"] != "erro":
                     self.status.update(estado="parado", mensagem="Monitoramento parado.")
 

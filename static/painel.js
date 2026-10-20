@@ -53,7 +53,7 @@ function mostrarPessoas(pessoas) {
     const card = document.createElement("article");
     card.className = "pessoa";
     const titulo = document.createElement("h3");
-    titulo.textContent = "Pessoa " + pessoa.id + " · " + (pessoa.postura === "Em pe" ? "Em pé" : pessoa.postura || "Postura não avaliada");
+    titulo.textContent = "Pessoa " + pessoa.id + " · " + (pessoa.postura === "Em pe" ? "Em pé" : pessoa.postura || "Postura inconclusiva");
     card.append(titulo);
     Object.entries(pessoa.epis).forEach(([item, estado]) => {
       const badge = document.createElement("span");
@@ -67,6 +67,20 @@ function mostrarPessoas(pessoas) {
       texto.textContent = "Nenhum EPI obrigatório selecionado.";
       card.append(texto);
     }
+    const leitura = document.createElement("p");
+    leitura.className = "muted small";
+    const angulo = Number.isFinite(pessoa.postura_angulo)
+      ? "Inclinação do tronco: " + pessoa.postura_angulo + "°. " : "";
+    if (!pessoa.postura) {
+      leitura.textContent = angulo + (pessoa.postura_motivo || "Corpo sem visibilidade suficiente.");
+    } else if (pessoa.postura === "Deitada") {
+      leitura.textContent = angulo + (pessoa.queda_confirmada ? "Possível queda confirmada para alerta."
+        : "Verificando possível queda: " + (pessoa.queda_quadros || 0) + "/3 quadros; "
+          + (pessoa.queda_observada_segundos || 0) + "/" + pessoa.queda_confirmacao_segundos + " segundos.");
+    } else {
+      leitura.textContent = angulo + "Postura estimada pela imagem da câmera.";
+    }
+    card.append(leitura);
     area.append(card);
   });
 }
@@ -101,7 +115,8 @@ async function atualizarStatus() {
   ultimoStatus = status;
   elemento("estado").textContent = status.estado.toUpperCase();
   elemento("estado").className = "badge " + status.estado;
-  elemento("mensagem").textContent = status.mensagem + (status.aviso ? " " + status.aviso : "");
+  elemento("mensagem").textContent = status.mensagem + (status.aviso ? " " + status.aviso : "")
+    + (status.aviso_desempenho ? " " + status.aviso_desempenho : "");
   elemento("camera").textContent = status.camera;
   elemento("fps").textContent = status.fps;
   elemento("imagemEstado").textContent = status.executando ? "Monitoramento em andamento" : "Monitoramento parado";

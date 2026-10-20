@@ -30,8 +30,11 @@ As regras geométricas e a visibilidade da pose são filtros conservadores.
 Não comprovam que uma região esteja livre de toda oclusão. Os IDs são
 temporários, baseados na sobreposição das caixas; podem mudar em movimentos
 rápidos, cruzamentos e oclusões. Não representam a identidade do funcionário.
-Uma perda de detecção interrompe a confirmação. Intervalos maiores que
-2 segundos entre observações também reiniciam a contagem.
+Uma perda de detecção interrompe a confirmação. Por padrão, intervalos maiores
+que 2 segundos entre observações reiniciam a contagem. Desde o ajuste de
+20/10/2026, a duração medida do processamento pode ampliar essa tolerância,
+com limite de 10 segundos; pausas arbitrárias e pessoas ausentes continuam
+reiniciando a confirmação. Três observações continuam sendo obrigatórias.
 
 Os alertas têm intervalo independente por pessoa, tipo e EPI. Uma nova
 pessoa não fica bloqueada pelo alerta de outra. A postura deitada tem
@@ -151,3 +154,59 @@ Diagnósticos locais estão em diagnosticos/oculos_20261019, fora do Git.
 O código anterior a esse ajuste está em backups/antes_ajuste_oculos_20261019.
 Para retornar, pare o servidor e reponha main.py e epi_monitoramento.py
 desse backup. Nenhum peso de modelo nem credencial foi alterado.
+
+## Correção da avaliação de quedas em 20/10/2026
+
+A regra anterior classificava praticamente todo tronco com inclinação de até
+60 graus como em pé, a menos que a caixa da pessoa fosse muito larga.
+Inclinações intermediárias, pontos coincidentes e algumas leituras inválidas
+podiam acabar rotuladas como em pé. Também eram exigidos os dois lados do
+tronco, prejudicando a avaliação de pessoas deitadas de lado.
+
+Agora:
+
+- Os marcos precisam ser finitos, visíveis e separados por uma distância mínima.
+  Um lado do tronco suficientemente visível permite a avaliação lateral; lados
+  contraditórios deixam a postura inconclusiva.
+- A inclinação é calculada em pixels, considerando largura e altura reais,
+  inclusive quando a câmera entrega uma resolução diferente da solicitada.
+- A faixa de até 30 graus pode indicar em pé. A partir de 55 graus pode indicar
+  deitada; entre 45 e 55 graus também se exige caixa mais larga, com proporção
+  de pelo menos 1,15. As demais situações ficam inconclusivas. Uma caixa larga
+  sozinha não comprova queda. Pernas verticais visíveis em uma caixa alta podem
+  indicar uma pessoa curvada, deixando a leitura inconclusiva.
+- A pose recebe uma margem de 15% ao redor da pessoa. Os marcos retornam ao
+  referencial da caixa original, preservando a associação dos EPIs.
+- A confirmação usa o instante da obtenção do quadro. A tolerância entre
+  observações acompanha o processamento medido, limitada a 10 segundos;
+  não se confunde automaticamente uma pausa da câmera com processamento lento.
+- O painel mostra inclinação estimada, motivo de leitura inconclusiva e
+  progresso em quadros/segundos da confirmação. Há um aviso de processamento
+  lento acima de 2 segundos por quadro.
+
+Esses limiares são heurísticos, não uma calibração validada no ambiente do
+outro computador. O sistema continua alertando **possível queda por postura
+deitada persistente**, não comprovando um movimento de queda nem um acidente.
+Não foi realizado treinamento novo e os modelos de EPI não foram substituídos.
+
+Posicione a câmera aproximadamente nivelada e com o corpo inteiro visível.
+Uma pessoa deitada em direção à câmera pode parecer vertical na imagem 2D;
+vistas de cima, oclusões e enquadramentos cortados também exigem avaliação real
+da instalação. Nesses casos, envie uma captura do painel e os valores de
+inclinação/quadros por segundo para diagnosticar a cena. Não simule uma queda
+perigosa: use imagens ou uma pessoa já deitada em uma posição segura.
+
+Validação automatizada: 46 testes Python, incluindo geometrias sintéticas em
+resoluções diferentes, pose ausente/contraditória, pessoa curvada e uma câmera
+simulada com 3 segundos de inferência por quadro. Isso não constitui uma
+avaliação de precisão com quedas reais. O controlador JavaScript também testa
+a apresentação da postura inconclusiva e do progresso de confirmação.
+
+Backup anterior ao ajuste:
+
+    backups/antes_correcao_quedas_20261020/
+
+Para retornar localmente, pare o servidor e restaure main.py,
+epi_monitoramento.py e static/painel.js desse backup. As credenciais e os pesos
+dos modelos permaneceram inalterados. No GitHub, o commit anterior ao ajuste
+de quedas é b89b7e2, que preserva a versão publicada em 19/10/2026.

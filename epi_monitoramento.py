@@ -94,7 +94,7 @@ class ConfirmadorAlertas:
             self.observacoes.pop(chave, None)
             return False
         estado = self.observacoes.get(chave)
-        if estado is None or agora - estado.ultima > self.tolerancia:
+        if estado is None or agora < estado.ultima or agora - estado.ultima > self.tolerancia:
             estado = Observacao(agora, agora)
             self.observacoes[chave] = estado
         else:
@@ -254,17 +254,97 @@ def associar_epis(pessoas, deteccoes):
 
 
 def classificar_postura(angulo, proporcao):
-    return "Deitada" if angulo > 60 or proporcao > 1.25 else "Em pe"
+    """Inclinação em pixels relativa à vertical da imagem, não à gravidade."""
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (angulo, proporcao)):
+        return None
+    if not 0 <= angulo <= 90 or proporcao <= 0:
+        return None
+    if angulo >= 55 or (angulo >= 45 and proporcao >= 1.15):
+        return "Deitada"
+    if angulo <= 30 and proporcao <= 1.25:
+        return "Em pe"
+    return None  # Inclinação intermediária/caixa contraditória não significa em pé.
+
+
+def regiao_pose(caixa, tamanho):
+    """Margem para não cortar articulações na borda da detecção de pessoa."""
+    x1, y1, x2, y2 = caixa
+    mx, my = max(8, int((x2 - x1) * 0.15)), max(8, int((y2 - y1) * 0.15))
+    return (max(0, x1 - mx), max(0, y1 - my),
+            min(tamanho[1], x2 + mx), min(tamanho[0], y2 + my))
+
+
+def mapear_pontos_pose(marcos, regiao, caixa):
+    """Devolve pontos do recorte ampliado ao referencial da caixa da pessoa."""
+    rx1, ry1, rx2, ry2 = regiao
+    x1, y1, x2, y2 = caixa
+    return {
+        i: ((rx1 + p.x * (rx2 - rx1) - x1) / (x2 - x1),
+            (ry1 + p.y * (ry2 - ry1) - y1) / (y2 - y1), p.visibility)
+        for i, p in enumerate(marcos)
+    }
+
+
+def avaliar_postura(pontos, caixa):
+    resultado = {"postura": None, "angulo": None, "motivo": "Ombros e quadris sem visibilidade suficiente."}
+    if len(caixa) != 4 or not all(math.isfinite(v) for v in caixa):
+        return resultado
+    largura, altura = caixa[2] - caixa[0], caixa[3] - caixa[1]
+    if largura <= 0 or altura <= 0:
+        return resultado
+
+    def pixel(indice):
+        ponto = pontos.get(indice)
+        if ponto is None or len(ponto) < 3:
+            return None
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in ponto[:3]):
+            return None
+        x, y, visibilidade = ponto[:3]
+        if visibilidade < 0.5 or not (-0.25 <= x <= 1.25 and -0.25 <= y <= 1.25):
+            return None
+        return x * largura, y * altura
+
+    lados = []
+    minimo = max(12, min(largura, altura) * 0.08)
+    for ombro, quadril in ((11, 23), (12, 24)):
+        o, q = pixel(ombro), pixel(quadril)
+        if o is not None and q is not None:
+            vetor = (q[0] - o[0], q[1] - o[1])
+            if math.hypot(*vetor) >= minimo:
+                lados.append(vetor)
+    if not lados:
+        return resultado
+    if len(lados) == 2:
+        a, b = lados
+        cosseno = (a[0] * b[0] + a[1] * b[1]) / (math.hypot(*a) * math.hypot(*b))
+        if cosseno < math.cos(math.radians(45)):
+            resultado["motivo"] = "Os dois lados do tronco apresentam posições contraditórias."
+            return resultado
+    dx = sum(v[0] for v in lados) / len(lados)
+    dy = sum(v[1] for v in lados) / len(lados)
+    if math.hypot(dx, dy) < minimo:
+        return resultado
+    angulo = math.degrees(math.atan2(abs(dx), abs(dy)))
+    postura = classificar_postura(angulo, largura / altura)
+    # Um tronco inclinado com pernas verticais e caixa alta pode estar curvado,
+    # e não deitado. Sem evidência adicional a leitura fica inconclusiva.
+    if postura == "Deitada" and largura < altura:
+        for quadril, tornozelo in ((23, 27), (24, 28)):
+            q, t = pixel(quadril), pixel(tornozelo)
+            if q is not None and t is not None and t[1] - q[1] > minimo:
+                angulo_perna = math.degrees(math.atan2(abs(t[0] - q[0]), t[1] - q[1]))
+                if angulo_perna <= 25:
+                    postura = None
+                    break
+    resultado.update(postura=postura, angulo=round(angulo, 1), motivo=(
+        "Inclinação intermediária ou posição ambígua do corpo." if postura is None
+        else "Postura estimada pela inclinação do tronco visível."
+    ))
+    return resultado
 
 
 def postura_por_pontos(pontos, caixa):
-    if not all(ponto_visivel(pontos, p, 0.5) for p in (11, 12, 23, 24)):
-        return None
-    largura, altura = caixa[2] - caixa[0], caixa[3] - caixa[1]
-    ox, oy = ((pontos[11][i] + pontos[12][i]) / 2 for i in (0, 1))
-    qx, qy = ((pontos[23][i] + pontos[24][i]) / 2 for i in (0, 1))
-    angulo = math.degrees(math.atan2(abs(ox - qx) * largura, abs(oy - qy) * altura))
-    return classificar_postura(angulo, largura / max(altura, 1))
+    return avaliar_postura(pontos, caixa)["postura"]
 
 
 class MotorAlertas:
@@ -273,8 +353,19 @@ class MotorAlertas:
         self.confirmacao_queda = confirmacao_queda
         self.rastreador = RastreadorPessoas()
         self.confirmador = ConfirmadorAlertas(intervalo)
+        self.processamento_anterior = 0
 
-    def avaliar(self, caixas, pontos, deteccoes_epi, obrigatorios, suportados, tamanho, agora):
+    def avaliar(self, caixas, pontos, deteccoes_epi, obrigatorios, suportados, tamanho, agora,
+                processamento_segundos=None):
+        # Usa a duração medida da inferência, nunca um intervalo arbitrário sem imagens.
+        # A duração de confirmação e a exigência de três observações são mantidas.
+        tolerancia = 2.0
+        if (isinstance(processamento_segundos, (int, float))
+                and math.isfinite(processamento_segundos) and processamento_segundos >= 0):
+            maior = max(processamento_segundos, self.processamento_anterior)
+            tolerancia = min(10.0, max(2.0, maior * 2 + 0.5))
+            self.processamento_anterior = processamento_segundos
+        self.rastreador.tolerancia = self.confirmador.tolerancia = tolerancia
         ids = self.rastreador.atualizar(caixas, agora)
         self.confirmador.limpar_ausentes(set(ids), set(self.rastreador.pessoas))
         pessoas = [{"id": pessoa_id, "caixa": tuple(caixa), "pontos": landmarks}
@@ -284,11 +375,17 @@ class MotorAlertas:
         for pessoa, landmarks in zip(pessoas, pontos):
             pessoa.pop("pontos", None)
             pessoa_id = pessoa["id"]
-            pessoa["postura"] = postura_por_pontos(landmarks, pessoa["caixa"])
+            postura = avaliar_postura(landmarks, pessoa["caixa"])
+            pessoa.update(postura=postura["postura"], postura_angulo=postura["angulo"],
+                          postura_motivo=postura["motivo"])
             chave_queda = (pessoa_id, "queda", "")
             pessoa["queda_confirmada"] = self.confirmador.observar(
                 chave_queda, pessoa["postura"] == "Deitada", agora, self.confirmacao_queda
             )
+            observacao = self.confirmador.observacoes.get(chave_queda)
+            pessoa["queda_quadros"] = observacao.quadros if observacao else 0
+            pessoa["queda_observada_segundos"] = round(agora - observacao.inicio, 1) if observacao else 0
+            pessoa["queda_confirmacao_segundos"] = self.confirmacao_queda
             if pessoa["queda_confirmada"] and self.confirmador.pode_alertar(chave_queda, agora):
                 alertas.append({"tipo": "queda", "pessoa_id": pessoa_id, "chaves": [chave_queda],
                                 "motivo": f"Pessoa {pessoa_id}: possível queda (postura deitada persistente)."})
