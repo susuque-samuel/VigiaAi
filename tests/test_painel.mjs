@@ -122,4 +122,24 @@ test("controles, confirmação por pessoa e coleta usando o JavaScript do painel
   card = elementos.get("pessoas").children[0];
   assert.match(card.children[0].textContent, /Postura inconclusiva/);
   assert.match(card.children.at(-1).textContent, /Ombros sem visibilidade/);
+  executar("mostrarPessoas([{id:1,postura:null,epis:{oculos:'inconclusivo'},epis_motivos:{oculos:'Detalhe insuficiente: 44 px na imagem original.'}}])");
+  card = elementos.get("pessoas").children[0];
+  assert.match(card.children[2].textContent, /Óculos: Detalhe insuficiente: 44 px na imagem original/);
+  executar("mostrarPessoas([{id:1,postura:'Em pe',epis:{oculos:'presente'},epis_motivos:{oculos:'motivo antigo'}}])");
+  card = elementos.get("pessoas").children[0];
+  assert.equal(card.children.some((item) => item.textContent.includes("motivo antigo")), false);
+  const statusTeste = await executar("ultimoStatus");
+  const fetchOriginal = contexto.fetch;
+  contexto.fetch = async () => ({ ok: true, json: async () => ({
+    ...statusTeste, epi_ativo: true, epi_reanalises: 1, epi_pessoas_pendentes: 2,
+    epi_reanalise_erro: null,
+  }) });
+  try {
+    await executar("atualizarStatus()");
+    assert.match(elementos.get("epiStatus").textContent, /Reanálise por pessoa: 1/);
+    assert.match(elementos.get("epiStatus").textContent, /Aguardando reanálise: 2/);
+    assert.match(elementos.get("epiStatus").textContent, /não comprovam ausência/);
+  } finally {
+    contexto.fetch = fetchOriginal;
+  }
 });

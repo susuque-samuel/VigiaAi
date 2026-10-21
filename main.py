@@ -16,9 +16,10 @@ from uuid import uuid4
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
+from epi_inferencia import extrair_deteccoes_epi, reanalisar_epi_por_pessoa
 from epi_monitoramento import (
     EPIS, MotorAlertas, classificar_postura, enriquecer_rosto, identificar_epi,
-    mapear_pontos_pose, regiao_pose,
+    mapear_pontos_pose, regiao_pose, rotulo_monitoramento,
 )
 
 BASE = Path(__file__).resolve().parent
@@ -64,17 +65,6 @@ def localizar_modelo_oculos():
 
 
 MODELO_OCULOS = localizar_modelo_oculos()
-
-
-def extrair_deteccoes_epi(resultados, piso_oculos=0.5):
-    deteccoes = []
-    for resultado in resultados:
-        for box, classe, conf in zip(resultado.boxes.xyxy, resultado.boxes.cls, resultado.boxes.conf):
-            nome = resultado.names[int(classe)]
-            minimo = piso_oculos if identificar_epi(nome) == "oculos" else 0.5
-            if float(conf) >= minimo:
-                deteccoes.append({"caixa": tuple(box.tolist()), "classe": nome, "confianca": float(conf)})
-    return deteccoes
 
 
 def abrir_camera(indice):
@@ -132,6 +122,7 @@ class Monitor:
             "oculos_ativo": False, "oculos_erro": None,
             "modelo_oculos": str(self.modelo_oculos.relative_to(BASE)) if self.modelo_oculos and self.modelo_oculos.is_relative_to(BASE) else (self.modelo_oculos.name if self.modelo_oculos else None),
             "aviso": None, "aviso_desempenho": None, "processamento_segundos": 0,
+            "epi_reanalises": 0, "epi_pessoas_pendentes": 0, "epi_reanalise_erro": None,
         }
 
     def configurar_epi(self, itens, segundos=None):
@@ -167,6 +158,7 @@ class Monitor:
                                deteccoes=[], epi_ativo=False, epi_erro=None, epis_suportados=[],
                                oculos_ativo=False, oculos_erro=None, aviso=None,
                                aviso_desempenho=None, processamento_segundos=0, fps=0)
+            self.status.update(epi_reanalises=0, epi_pessoas_pendentes=0, epi_reanalise_erro=None)
             self.thread = threading.Thread(target=self.executar, daemon=True)
             self.thread.start()
         return True, "Inicialização solicitada."
@@ -350,6 +342,7 @@ class Monitor:
                     if not self.stop.is_set():
                         self.status.update(estado="ativo", mensagem="Monitoramento ativo.")
                 falhas = 0
+                rodada_epi = 0
                 while not self.stop.is_set():
                     inicio = time.monotonic()
                     ok, quadro = camera.read()
@@ -411,7 +404,7 @@ class Monitor:
                         try:
                             piso = 0.15 if "oculos" in obrigatorios else 0.5
                             deteccoes_epi.extend(extrair_deteccoes_epi(
-                                modelo_epi(original, conf=piso, verbose=False), piso_oculos=piso
+                                modelo_epi(original, classes=None, imgsz=640, conf=piso, verbose=False), piso_oculos=piso
                             ))
                         except Exception as erro:
                             modelo_epi = None
@@ -431,18 +424,35 @@ class Monitor:
                         try:
                             classes = [indice for indice, nome in modelo_oculos.names.items() if identificar_epi(nome) == "oculos"]
                             deteccoes_epi.extend(extrair_deteccoes_epi(
-                                modelo_oculos(original, classes=classes, conf=0.15, verbose=False), piso_oculos=0.15
+                                modelo_oculos(original, classes=classes, imgsz=640, conf=0.15, verbose=False), piso_oculos=0.15
                             ))
                         except Exception as erro:
                             modelo_oculos = None
                             with self.lock:
                                 self.status["oculos_erro"] = f"Verificação adicional interrompida ({type(erro).__name__})."
+                    reanalise = {"concluidas": 0, "pendentes": 0, "erros": []}
+                    for landmarks in pontos:
+                        landmarks["_oculos_aux_indisponivel"] = bool(
+                            self.modelo_oculos and self.modelo_oculos != self.modelo_epi and modelo_oculos is None
+                        )
+                    if (modelo_epi is not None or modelo_oculos is not None) and verificar:
+                        locais, reanalise = reanalisar_epi_por_pessoa(
+                            modelo_epi, original, caixas, pontos, obrigatorios, deteccoes_epi,
+                            rodada=rodada_epi, modelo_oculos=modelo_oculos,
+                        )
+                        deteccoes_epi.extend(locais)
+                        rodada_epi += 1
                     with self.lock:
                         suportados = set(suportados_principais) if modelo_epi is not None else set()
                         if modelo_oculos is not None:
                             suportados.add("oculos")
                         self.status.update(epi_ativo=bool(suportados), epis_suportados=sorted(suportados),
                                            oculos_ativo=modelo_oculos is not None)
+                        self.status.update(
+                            epi_reanalises=reanalise["concluidas"], epi_pessoas_pendentes=reanalise["pendentes"],
+                            epi_reanalise_erro=("Reanálise local indisponível: " + ", ".join(reanalise["erros"]))
+                            if reanalise["erros"] else None,
+                        )
                     processamento = time.monotonic() - capturado_em
                     agora = capturado_em
                     pessoas, alertas = self.processar_deteccoes(
@@ -451,14 +461,15 @@ class Monitor:
                     )
                     anotado = original.copy()
                     for pessoa in pessoas:
-                        alerta = pessoa["queda_confirmada"] or pessoa["epi_faltando"]
-                        cor = (50, 70, 230) if alerta else (70, 190, 100)
+                        linhas, cor = rotulo_monitoramento(pessoa)
                         x1, y1, x2, y2 = pessoa["caixa"]
                         cv2.rectangle(anotado, (x1, y1), (x2, y2), cor, 2)
-                        texto = f"Pessoa {pessoa['id']} | {pessoa['postura'] or 'Postura inconclusiva'}"
-                        if pessoa["epi_faltando"]:
-                            texto += " | Possivel ausencia: " + ", ".join(pessoa["epi_faltando"])
-                        cv2.putText(anotado, texto, (x1, max(24, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, cor, 2)
+                        topo_texto = max(24, y1 - 10 - 24 * (len(linhas) - 1))
+                        for indice, texto in enumerate(linhas):
+                            largura_texto = cv2.getTextSize(texto, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0][0]
+                            texto_x = max(4, min(x1, original.shape[1] - largura_texto - 4))
+                            cv2.putText(anotado, texto, (texto_x, topo_texto + 24 * indice),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, cor, 2)
                     self._publicar_frame(original, anotado, pessoas, 1 / max(time.monotonic() - inicio, 0.001))
                     for evento in alertas:
                         self.alerta(anotado, evento, agora)

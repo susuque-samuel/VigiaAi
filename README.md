@@ -67,6 +67,18 @@ O painel mostra a inclinação estimada e o progresso de confirmação da possí
 queda. Não houve mudança das dependências nem dos pesos nesta correção.
 Leia os limites e testes em [Monitoramento e coleta](MONITORAMENTO_E_COLETA.md#correção-da-avaliação-de-quedas-em-20102026).
 
+A atualização de 21/10/2026 também publica os ajustes de EPIs que estavam
+somente no computador de origem: reanálise por pessoa, incluindo o detector
+auxiliar de óculos, confirmação de ausência mais conservadora e motivos das
+leituras inconclusivas no painel. A imagem usa amarelo para incerteza e separa
+os avisos em linhas. Há limite de quatro pessoas reanalisadas por quadro; isso
+pode reduzir o FPS. Os pesos e as dependências continuam os mesmos.
+
+O ajuste reduz falsos alertas, mas não constitui novo treinamento. Os modelos
+ainda falham com alguns óculos e condições de câmera: **inconclusivo não significa
+EPI presente**. Consulte os testes e as limitações em
+[Monitoramento e coleta](MONITORAMENTO_E_COLETA.md).
+
 ## Configurar o `.env`
 
 | Variável | Conteúdo |
@@ -108,6 +120,13 @@ Os testes não usam câmera nem enviam e-mail:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+São 79 testes Python nesta versão. Para os quatro testes de apresentação do
+painel em memória, sem servidor separado, execute:
+
+```powershell
+node --test tests/test_painel_oculos.mjs
 ```
 
 Para o teste opcional do controlador JavaScript, instale Node.js e execute

@@ -61,6 +61,13 @@ function mostrarPessoas(pessoas) {
       badge.textContent = nomes[item] + ": " + estados[estado];
       card.append(badge);
     });
+    Object.entries(pessoa.epis_motivos || {}).forEach(([item, motivo]) => {
+      if (pessoa.epis[item] !== "inconclusivo") return;
+      const explicacao = document.createElement("p");
+      explicacao.className = "muted small";
+      explicacao.textContent = nomes[item] + ": " + motivo;
+      card.append(explicacao);
+    });
     if (!Object.keys(pessoa.epis).length) {
       const texto = document.createElement("p");
       texto.className = "muted small";
@@ -130,7 +137,13 @@ async function atualizarStatus() {
   if (status.epi_obrigatorio.includes("oculos")) {
     if (status.oculos_ativo) elemento("epiStatus").textContent += " Óculos: verificação adicional ativa.";
     if (status.oculos_erro) elemento("epiStatus").textContent += " " + status.oculos_erro;
-    elemento("epiStatus").textContent += " Perfil ou evidência fraca de óculos deixam a leitura inconclusiva.";
+    elemento("epiStatus").textContent += " Perfil, pouco detalhe ou evidência fraca deixam a leitura inconclusiva; isso não significa EPI presente.";
+  }
+  if (status.epi_ativo && (status.epi_reanalises || status.epi_pessoas_pendentes)) {
+    elemento("epiStatus").textContent += " Reanálise por pessoa: " + (status.epi_reanalises || 0) + " neste quadro (limite de 4).";
+    if (status.epi_pessoas_pendentes) elemento("epiStatus").textContent += " Aguardando reanálise: " + status.epi_pessoas_pendentes + ".";
+    if (status.epi_reanalise_erro) elemento("epiStatus").textContent += " " + status.epi_reanalise_erro + ".";
+    elemento("epiStatus").textContent += " Imagem pequena ou reanálise pendente não comprovam ausência.";
   }
   if (!politicaCarregada) {
     document.querySelectorAll('input[name="epi"]').forEach((input) => { input.checked = status.epi_obrigatorio.includes(input.value); });

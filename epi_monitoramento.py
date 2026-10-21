@@ -13,6 +13,10 @@ EPIS = {
     "mascara": ("mascara", "máscara", "mask", "face mask"),
 }
 
+# Filtro operacional conservador na imagem ORIGINAL, não no recorte ampliado.
+# Não representa alcance/precisão validados. A associação positiva segue em 0,5.
+MIN_OLHOS_AUSENCIA_OCULOS = 48
+
 
 def normalizar_nome(nome):
     texto = unicodedata.normalize("NFKD", str(nome)).encode("ascii", "ignore").decode()
@@ -161,11 +165,18 @@ def referencia_olhos(caixa, pontos):
 def regiao_verificavel(item, caixa, pontos, tamanho):
     largura, altura = caixa[2] - caixa[0], caixa[3] - caixa[1]
     h_quadro, w_quadro = tamanho[:2]
+    if (item in pontos.get("_epi_local_necessarios", ())
+            and item not in pontos.get("_epi_local_avaliados", ())):
+        return False
     if item == "oculos":
+        if pontos.get("_oculos_aux_indisponivel"):
+            return False
         referencia = referencia_olhos(caixa, pontos)
         if referencia is None or not ponto_visivel(pontos, 0):
             return False
         cx, cy, distancia = referencia
+        if distancia < MIN_OLHOS_AUSENCIA_OCULOS:
+            return False
         nariz_x = caixa[0] + pontos[0][0] * largura
         rosto = pontos.get("_rosto_caixa")
         if rosto is not None:
@@ -189,15 +200,32 @@ def regiao_verificavel(item, caixa, pontos, tamanho):
     if caixa[0] <= 2 or caixa[1] <= 2 or caixa[2] >= w_quadro - 2 or caixa[3] >= h_quadro - 2:
         return False
     if item == "colete":
-        return all(ponto_visivel(pontos, p) for p in (11, 12, 23, 24))
+        if not all(ponto_visivel(pontos, p) for p in (11, 12, 23, 24)):
+            return False
+        ombros = math.hypot((pontos[11][0] - pontos[12][0]) * largura,
+                            (pontos[11][1] - pontos[12][1]) * altura)
+        tronco = math.hypot(
+            (pontos[23][0] + pontos[24][0] - pontos[11][0] - pontos[12][0]) / 2 * largura,
+            (pontos[23][1] + pontos[24][1] - pontos[11][1] - pontos[12][1]) / 2 * altura,
+        )
+        return ombros >= 36 and tronco >= 40
     if item == "capacete":
-        return ponto_visivel(pontos, 0) and all(ponto_visivel(pontos, p) for p in (11, 12))
+        if not all(ponto_visivel(pontos, p) for p in (0, 2, 5, 11, 12)):
+            return False
+        # Detalhe insuficiente da cabeça não comprova ausência de capacete.
+        olhos = math.hypot((pontos[2][0] - pontos[5][0]) * largura,
+                          (pontos[2][1] - pontos[5][1]) * altura)
+        return olhos >= 12
     if item == "mascara":
         if not all(ponto_visivel(pontos, p) for p in (0, 2, 5)):
             return False
         return abs(pontos[2][0] - pontos[5][0]) * largura >= 12
     if item == "luvas":
-        return altura >= 220 and all(ponto_visivel(pontos, p) for p in (15, 16, 19, 20))
+        if altura < 220 or not all(ponto_visivel(pontos, p) for p in (15, 16, 19, 20)):
+            return False
+        return all(math.hypot((pontos[pulso][0] - pontos[dedo][0]) * largura,
+                              (pontos[pulso][1] - pontos[dedo][1]) * altura) >= 12
+                   for pulso, dedo in ((15, 19), (16, 20)))
     return False
 
 
@@ -217,7 +245,8 @@ def associar_epis(pessoas, deteccoes):
         if item is None:
             continue
         confianca = deteccao.get("confianca", 1.0)
-        if confianca < (0.15 if item == "oculos" else 0.5):
+        minimo = 0.15 if item == "oculos" else (0.25 if deteccao.get("local") else 0.5)
+        if confianca < minimo:
             continue
         ex1, ey1, ex2, ey2 = deteccao["caixa"]
         cx, cy = (ex1 + ex2) / 2, (ey1 + ey2) / 2
@@ -235,6 +264,7 @@ def associar_epis(pessoas, deteccoes):
                 if (
                     abs(cx - olho_x) <= distancia * 1.2
                     and abs(cy - olho_y) <= distancia * 0.8
+                    and ey1 - distancia * 0.2 <= olho_y <= ey2 + distancia * 0.2
                     and distancia * 0.7 <= largura_item <= distancia * 5
                     and distancia * 0.12 <= altura_item <= distancia * 2.5
                 ):
@@ -248,9 +278,29 @@ def associar_epis(pessoas, deteccoes):
         elif candidatos and confianca >= 0.5:
             presentes[candidatos[0][1]].add(item)
         elif candidatos:
-            # Evidência fraca de óculos bloqueia alerta; não comprova presença.
+            # Evidência fraca bloqueia alerta; não comprova presença de EPI.
             ambiguos[candidatos[0][1]].add(item)
     return presentes, ambiguos
+
+
+def rotulo_monitoramento(pessoa):
+    """Inconclusivo não ganha a mesma cor da presença confirmada."""
+    estados = pessoa.get("epis", {})
+    faltando = pessoa.get("epi_faltando", [])
+    inconclusivos = [item for item, estado in estados.items() if estado == "inconclusivo"]
+    observando = [item for item, estado in estados.items() if estado == "observando"]
+    linhas = [f"Pessoa {pessoa['id']} | {pessoa.get('postura') or 'Postura inconclusiva'}"]
+    for prefixo, itens in (("Possivel ausencia", faltando), ("EPI inconclusivo", inconclusivos),
+                          ("Verificando EPI", observando)):
+        if itens:
+            linhas.append(prefixo + ": " + ", ".join(itens))
+    if pessoa.get("queda_confirmada") or faltando:
+        cor = (50, 70, 230)
+    elif inconclusivos or observando or not pessoa.get("postura"):
+        cor = (0, 180, 255)
+    else:
+        cor = (70, 190, 100)
+    return linhas, cor
 
 
 def classificar_postura(angulo, proporcao):
@@ -390,6 +440,7 @@ class MotorAlertas:
                 alertas.append({"tipo": "queda", "pessoa_id": pessoa_id, "chaves": [chave_queda],
                                 "motivo": f"Pessoa {pessoa_id}: possível queda (postura deitada persistente)."})
             estados = {}
+            motivos = {}
             chaves_epi = []
             for item in obrigatorios:
                 estado = "inconclusivo"
@@ -409,7 +460,26 @@ class MotorAlertas:
                     if self.confirmador.pode_alertar(chave, agora):
                         chaves_epi.append(chave)
                 estados[item] = estado
+                if estado == "inconclusivo":
+                    if item not in suportados:
+                        motivo = "Detector indisponível para este item."
+                    elif (item in landmarks.get("_epi_local_necessarios", ())
+                          and item not in landmarks.get("_epi_local_avaliados", ())):
+                        motivo = "Reanálise pendente ou com falha; ausência não confirmada."
+                    elif item == "oculos" and landmarks.get("_oculos_aux_indisponivel"):
+                        motivo = "Detector auxiliar de óculos indisponível; ausência não confirmada."
+                    elif item in ambiguos[pessoa_id]:
+                        motivo = "Evidência fraca ou associação ambígua; não comprova presença nem ausência."
+                    elif item == "oculos" and (ref := referencia_olhos(pessoa["caixa"], landmarks)) is not None:
+                        motivo = (f"Detalhe insuficiente para avaliar ausência de óculos ({ref[2]:.0f} px entre olhos; "
+                                  f"mínimo conservador: {MIN_OLHOS_AUSENCIA_OCULOS} px na imagem original)."
+                                  if ref[2] < MIN_OLHOS_AUSENCIA_OCULOS else
+                                  "Rosto inclinado, de perfil ou região dos olhos cortada; ausência não confirmada.")
+                    else:
+                        motivo = "Região necessária sem visibilidade suficiente; ausência não confirmada."
+                    motivos[item] = motivo
             pessoa["epis"] = estados
+            pessoa["epis_motivos"] = motivos
             pessoa["epi_faltando"] = [item for item, estado in estados.items() if estado == "possivel_ausencia"]
             if chaves_epi:
                 itens = ", ".join(chave[2] for chave in chaves_epi)

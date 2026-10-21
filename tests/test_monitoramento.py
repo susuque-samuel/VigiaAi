@@ -138,7 +138,9 @@ class TestMotor(unittest.TestCase):
 
 class TestOculos(unittest.TestCase):
     def avaliar(self, deteccoes=None, pontos=None, caixa=CAIXA):
-        pontos = corpo_visivel() if pontos is None else pontos
+        if pontos is None:
+            pontos = corpo_visivel()
+            pontos.update({2: (0.35, 0.1, 1), 5: (0.65, 0.1, 1)})
         motor = MotorAlertas()
         for agora in (0, 1.5, 3):
             pessoas, alertas = motor.avaliar(
@@ -181,7 +183,9 @@ class TestOculos(unittest.TestCase):
 
     def test_tronco_cortado_nao_invalida_olhos_inteiros(self):
         caixa = (100, 60, 300, 720)
-        pessoa, _ = self.avaliar(pontos=corpo_visivel(), caixa=caixa)
+        pontos = corpo_visivel()
+        pontos.update({2: (0.35, 0.1, 1), 5: (0.65, 0.1, 1)})
+        pessoa, _ = self.avaliar(pontos=pontos, caixa=caixa)
         self.assertEqual(pessoa["epis"]["oculos"], "possivel_ausencia")
 
     def test_rosto_cortado_nao_confirma_ausencia_com_olhos_estimados(self):
