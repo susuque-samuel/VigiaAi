@@ -213,9 +213,8 @@ de quedas é b89b7e2, que preserva a versão publicada em 19/10/2026.
 
 ## Reanálise local de EPIs em 20/10/2026
 
-Este ajuste foi inicialmente aplicado somente no computador de origem, conforme
-solicitado. Sua publicação no GitHub foi autorizada em 21/10/2026 e está incluída
-nesta versão. Foi preservado o estado anterior localmente em:
+Este ajuste foi aplicado somente neste computador, conforme solicitado, sem
+atualizar o GitHub. Foi preservado o estado anterior em:
 
     backups/antes_ajuste_distancia_epi_20261020/
 
@@ -285,9 +284,7 @@ modelos para usar este ajuste.
 
 ## Óculos com pouca evidência e rótulos em 21/10/2026
 
-Ajuste inicialmente local, posteriormente autorizado para publicação no GitHub
-em 21/10/2026 e incluído nesta versão. Backup anterior ao ajuste, disponível
-somente no computador de origem:
+Ajuste somente local, sem atualizar o GitHub. Backup anterior ao ajuste:
 
     backups/antes_ajuste_oculos_inclinados_20261021/
 
@@ -362,17 +359,3 @@ preservados no backup; os dois arquivos novos de teste podem permanecer sem
 alterar o funcionamento do aplicativo. Para testar a versão restaurada, arquive
 test_oculos_limites.py e test_painel_oculos.mjs fora de tests/, pois eles dependem
 deste ajuste. Nenhuma credencial ou foto foi publicada.
-
-### Atualização do repositório em 21/10/2026
-
-Esta publicação inclui o código de reanálise de EPIs de 20/10 e o ajuste de
-óculos de 21/10, com seus testes automatizados. Não inclui os backups,
-diagnósticos com fotos, .env, configurações privadas ou a .venv do computador
-de origem. As dependências, o YAML portátil e os três modelos publicados
-anteriormente foram preservados.
-
-Para atualizar outro computador, pare o servidor e, em um clone sem alterações
-locais pendentes, execute git pull --ff-only. Reinicie o aplicativo e atualize
-o navegador com Ctrl+F5. O .env e a política privada permanecem locais. Quem
-precisar voltar à versão publicada antes dos ajustes de EPI pode consultar o
-commit d30462b; os backups citados acima não são distribuídos no repositório.

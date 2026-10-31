@@ -1,4 +1,5 @@
-# Sem caminho absoluto: imagens e anotações ficam ao lado deste YAML.
+path: C:/Users/samue/Desktop/VigiaAi-certo/dataset_epi
+
 train: images/train
 val: images/val
 
