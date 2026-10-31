@@ -19,7 +19,7 @@ button:hover:not(:disabled) { background: #314b6b; }
 button:disabled { cursor: default; opacity: .45; }
 .primary { background: #2375b9; border-color: #398dd1; }
 .primary:hover:not(:disabled) { background: #2d88d0; }
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #8ed7ff; outline-offset: 3px; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #8ed7ff; outline-offset: 3px; }
 .controls button { margin: 0 8px 6px 0; }
 .badge { display: inline-block; background: #273a52; color: #cdd9ea; border-radius: 20px; font-size: 12px; padding: 6px 12px; white-space: nowrap; }
 .badge.ativo, .item-presente { background: #174735; color: #b3efd4; }
@@ -35,9 +35,10 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 .checklist label { display: flex; align-items: center; gap: 9px; }
 input[type=checkbox] { width: 18px; height: 18px; accent-color: #72bfff; }
 .field { display: flex; flex-direction: column; gap: 8px; font-size: 13px; margin-bottom: 16px; }
-input[type=number], input[type=text] { border: 1px solid #465c77; background: #0d1828; border-radius: 6px; padding: 10px; color: #edf6ff; font: inherit; }
+input[type=number], input[type=text], .field select { border: 1px solid #465c77; background: #0d1828; border-radius: 6px; padding: 10px; color: #edf6ff; font: inherit; }
 input[type=number] { width: 72px; margin-right: 5px; }
 input[type=text] { width: 100%; }
+.field select { width: 100%; }
 .pessoas { display: flex; flex-wrap: wrap; gap: 12px; }
 .pessoa { border: 1px solid #344962; background: #101c2c; padding: 14px; border-radius: 8px; flex: 1 1 260px; }
 .pessoa h3 { margin: 0 0 8px; font-size: 15px; }

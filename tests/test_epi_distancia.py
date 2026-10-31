@@ -60,7 +60,7 @@ class TestInferenciaLocal(unittest.TestCase):
     def estado(self, pontos, deteccoes, caixas=None, obrigatorios=None):
         caixas = [CAIXA] if caixas is None else caixas
         obrigatorios = ["capacete"] if obrigatorios is None else obrigatorios
-        motor = MotorAlertas()
+        motor = MotorAlertas(modo_ausencia="observacao")
         for agora in (0, 1.5, 3):
             pessoas, alertas = motor.avaliar(
                 caixas, pontos, deteccoes, obrigatorios, set(obrigatorios), TAMANHO, agora,
@@ -172,8 +172,10 @@ class TestIntegracaoReanalise(unittest.TestCase):
 
                     def read(self):
                         self.leituras += 1
-                        if self.leituras <= 3:
-                            return True, np.zeros(TAMANHO, dtype=np.uint8)
+                        if self.leituras <= 7:
+                            quadro = np.zeros(TAMANHO, dtype=np.uint8)
+                            quadro[:] = np.linspace(0, 255, TAMANHO[1], dtype=np.uint8)[None, :, None]
+                            return True, quadro
                         monitor.stop.set()
                         return False, None
 
@@ -207,7 +209,7 @@ class TestIntegracaoReanalise(unittest.TestCase):
 
                 modelo_epi = EpiModelo([((80, 20, 160, 70), 0, 0.8)], falha=falha)
                 mp = SimpleNamespace(solutions=SimpleNamespace(pose=SimpleNamespace(Pose=lambda **_: Pose())))
-                with patch("main.abrir_camera", return_value=Camera()), patch("main.time", SimpleNamespace(
+                with patch('runtime_ia.opcoes_inferencia', return_value={'device': 'cpu', 'imgsz': 640}), patch("main.abrir_camera", return_value=Camera()), patch("main.time", SimpleNamespace(
                     monotonic=lambda: relogio[0]
                 )), patch.dict("sys.modules", {
                     "mediapipe": mp, "ultralytics": SimpleNamespace(
@@ -216,7 +218,7 @@ class TestIntegracaoReanalise(unittest.TestCase):
                 }), patch.object(monitor, "alerta") as alerta:
                     monitor.executar()
                 self.assertEqual(monitor.status["estado"], "parado", monitor.status["mensagem"])
-                self.assertEqual(len(globais), 3)
+                self.assertEqual(len(globais), 7)
                 self.assertTrue(all("classes" in opcoes and opcoes["classes"] is None for opcoes in globais))
                 self.assertTrue(all(opcoes["imgsz"] == 640 for opcoes in globais))
                 self.assertTrue(any(c.args[1]["tipo"] == "queda" for c in alerta.call_args_list))

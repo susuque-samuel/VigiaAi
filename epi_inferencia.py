@@ -2,7 +2,7 @@
 
 import math
 
-from epi_monitoramento import associar_epis, identificar_epi
+from epi_monitoramento import associar_epis, identificar_epi, identificar_ausencia
 
 
 def extrair_deteccoes_epi(resultados, piso_oculos=0.5, origem=(0, 0), itens=None, piso_outros=0.5):
@@ -10,7 +10,7 @@ def extrair_deteccoes_epi(resultados, piso_oculos=0.5, origem=(0, 0), itens=None
     for resultado in resultados:
         for box, classe, conf in zip(resultado.boxes.xyxy, resultado.boxes.cls, resultado.boxes.conf):
             nome = resultado.names[int(classe)]
-            item = identificar_epi(nome)
+            item = identificar_epi(nome) or identificar_ausencia(nome)
             minimo = piso_oculos if item == "oculos" else piso_outros
             confianca = float(conf)
             if item is None or (itens is not None and item not in itens):
@@ -35,7 +35,8 @@ def regiao_epi(caixa, tamanho):
 
 
 def reanalisar_epi_por_pessoa(modelo, quadro, caixas, pontos, obrigatorios, deteccoes,
-                             piso_oculos=0.15, limite=4, rodada=0, modelo_oculos=None):
+                             piso_oculos=0.15, limite=4, rodada=0, modelo_oculos=None,
+                             opcoes_inferencia=None):
     """Mantém o limiar de 0,5; pendências/falhas não são evidência de ausência."""
     pessoas = [{"id": i, "caixa": tuple(caixa), "pontos": landmarks}
                for i, (caixa, landmarks) in enumerate(zip(caixas, pontos))]
@@ -46,7 +47,7 @@ def reanalisar_epi_por_pessoa(modelo, quadro, caixas, pontos, obrigatorios, dete
             continue
         nomes = detector.names
         classes = dict(enumerate(nomes)) if isinstance(nomes, list) else nomes
-        itens_modelo = {identificar_epi(nome) for nome in classes.values()} & permitidos
+        itens_modelo = {identificar_epi(nome) or identificar_ausencia(nome) for nome in classes.values()} & permitidos
         if itens_modelo:
             modelos.append((detector, classes, itens_modelo))
     suportados = set().union(*(itens for _, _, itens in modelos))
@@ -75,9 +76,12 @@ def reanalisar_epi_por_pessoa(modelo, quadro, caixas, pontos, obrigatorios, dete
             if not solicitados:
                 continue
             try:
-                indices = [i for i, nome in classes.items() if identificar_epi(nome) in solicitados]
+                indices = [i for i, nome in classes.items()
+                           if (identificar_epi(nome) or identificar_ausencia(nome)) in solicitados]
                 piso = piso_oculos if "oculos" in solicitados else 0.25
-                saida = detector(quadro[y1:y2, x1:x2], classes=indices, conf=piso, imgsz=640, verbose=False)
+                opcoes = {k: v for k, v in (opcoes_inferencia or {}).items() if k in {"device", "quantize", "imgsz"}}
+                opcoes.setdefault("imgsz", 640)
+                saida = detector(quadro[y1:y2, x1:x2], classes=indices, conf=piso, verbose=False, **opcoes)
                 locais = extrair_deteccoes_epi(saida, piso_oculos=piso_oculos, origem=(x1, y1),
                                               itens=solicitados, piso_outros=0.25)
                 # Descarta previsões em vizinhos capturados pela margem do recorte.

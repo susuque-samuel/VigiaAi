@@ -23,7 +23,7 @@ def pontos_olhos(distancia=64):
 
 class TestDetalheOculos(unittest.TestCase):
     def avaliar(self, pontos, deteccoes=()):
-        motor = MotorAlertas()
+        motor = MotorAlertas(modo_ausencia="observacao")
         for agora in (0, 1.5, 3):
             pessoas, alertas = motor.avaliar([CAIXA], [pontos], list(deteccoes), ["oculos"],
                                             {"oculos"}, TAMANHO, agora)
@@ -59,7 +59,7 @@ class TestDetalheOculos(unittest.TestCase):
         self.assertFalse(alertas)
 
     def test_detalhe_insuficiente_interrompe_confirmacao_antiga(self):
-        motor = MotorAlertas()
+        motor = MotorAlertas(modo_ausencia="observacao")
         for agora, distancia in ((0, 64), (1.5, 64), (2, 44), (3.5, 64)):
             pessoas, alertas = motor.avaliar([CAIXA], [pontos_olhos(distancia)], [], ["oculos"],
                                             {"oculos"}, TAMANHO, agora)
@@ -168,7 +168,9 @@ class TestFluxoAuxiliar(unittest.TestCase):
                         self.leituras += 1
                         relogio[0] += 1.5
                         if self.leituras <= 3:
-                            return True, np.zeros(TAMANHO, dtype=np.uint8)
+                            quadro = np.zeros(TAMANHO, dtype=np.uint8)
+                            quadro[:] = np.linspace(0, 255, TAMANHO[1], dtype=np.uint8)[None, :, None]
+                            return True, quadro
                         monitor.stop.set()
                         return False, None
 
@@ -217,7 +219,7 @@ class TestFluxoAuxiliar(unittest.TestCase):
                 mp = SimpleNamespace(solutions=SimpleNamespace(
                     pose=SimpleNamespace(Pose=lambda **_: Contexto()),
                     face_detection=SimpleNamespace(FaceDetection=lambda **_: Contexto())))
-                with patch("main.abrir_camera", return_value=Camera()), patch("main.time", SimpleNamespace(
+                with patch('runtime_ia.opcoes_inferencia', return_value={'device': 'cpu', 'imgsz': 640}), patch("main.abrir_camera", return_value=Camera()), patch("main.time", SimpleNamespace(
                     monotonic=lambda: relogio[0]
                 )), patch.dict("sys.modules", {"mediapipe": mp, "ultralytics": SimpleNamespace(YOLO=carregar)}), patch.object(
                     monitor, "alerta"

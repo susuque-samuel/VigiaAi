@@ -1,4 +1,5 @@
-# Sem caminho absoluto: imagens e anotações ficam ao lado deste YAML.
+# Caminhos relativos a este YAML; imagens e anotações originais preservadas.
+
 train: images/train
 val: images/val
 

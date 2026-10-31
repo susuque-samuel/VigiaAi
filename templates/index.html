@@ -43,14 +43,21 @@
         <label class="field">Confirmar possível ausência após
           <span><input id="confirmacao" type="number" min="1" max="30" step="1" value="3" required> segundos</span>
         </label>
+        <label class="field">Regra para possível ausência
+          <select id="modoAusencia">
+            <option value="observacao">Observação conservadora — modelos atuais</option>
+            <option value="explicita">Exigir classe explícita de ausência</option>
+          </select>
+        </label>
         <button id="salvarEpi" type="submit">Salvar política</button>
       </form>
       <p id="epiStatus" class="muted small">Aguardando o detector.</p>
-      <p class="muted small">A confirmação exige vários quadros da mesma pessoa e uma região visível. “Inconclusivo” não gera alerta de EPI.</p>
+      <p class="muted small">Não detectar não comprova ausência. O modo observação preserva possíveis avisos após reanálise, região visível e vários quadros; exige verificação humana. O modo explícito precisa de classes negativas, que os pesos atuais não têm. “Inconclusivo” não gera alerta.</p>
     </section>
   </div>
   <section class="card" aria-labelledby="pessoasTitulo">
     <div class="section-heading"><h2 id="pessoasTitulo">Pessoas em observação</h2><span class="muted small">Atualização automática</span></div>
+    <p class="muted small">Possível queda ou colapso requer verificação humana. A câmera não diagnostica desmaio.</p>
     <div id="pessoas" class="pessoas"><p class="muted">Nenhuma pessoa em observação.</p></div>
   </section>
   <section class="card" aria-labelledby="coletaTitulo">

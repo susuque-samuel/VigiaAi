@@ -5,17 +5,18 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from queda_temporal import AnaliseTemporal
+
 EPIS = {
     "capacete": ("capacete", "helmet", "hardhat", "hard_hat", "hard hat"),
     "colete": ("colete", "vest", "safety_vest", "safety vest"),
-    "oculos": ("oculos", "óculos", "goggles", "glasses", "safety glasses"),
+    "oculos": ("oculos", "óculos", "goggles", "safety glasses", "safety goggles"),
     "luvas": ("luvas", "glove", "gloves"),
     "mascara": ("mascara", "máscara", "mask", "face mask"),
 }
 
-# Filtro operacional conservador na imagem ORIGINAL, não no recorte ampliado.
-# Não representa alcance/precisão validados. A associação positiva segue em 0,5.
-MIN_OLHOS_AUSENCIA_OCULOS = 48
+MIN_OLHOS_AUSENCIA_OCULOS = 48  # Pixels nativos; filtro conservador, não alcance validado.
+MODOS_AUSENCIA = {"observacao", "explicita"}
 
 
 def normalizar_nome(nome):
@@ -31,6 +32,17 @@ def identificar_epi(nome):
     return None  # NO-Hardhat e similares nunca contam como presença.
 
 
+def identificar_ausencia(nome):
+    nome = normalizar_nome(nome)
+    for prefixo in ('no_', 'without_', 'sem_'):
+        if nome.startswith(prefixo):
+            resto = nome[len(prefixo):]
+            if resto == 'goggle':
+                resto = 'goggles'
+            return identificar_epi(resto)
+    return None
+
+
 def iou(a, b):
     inter = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(
         0, min(a[3], b[3]) - max(a[1], b[1])
@@ -44,6 +56,8 @@ def iou(a, b):
 class Pessoa:
     caixa: tuple
     visto: float
+    velocidade: tuple = (0.0, 0.0)
+    ambiguo: bool = False
 
 
 class RastreadorPessoas:
@@ -60,11 +74,20 @@ class RastreadorPessoas:
             if agora - pessoa.visto <= self.tolerancia
         }
         pares = []
+        candidatos = {}
         for indice, caixa in enumerate(caixas):
             for pessoa_id, pessoa in self.pessoas.items():
-                sobreposicao = iou(caixa, pessoa.caixa)
-                if sobreposicao >= 0.25:
-                    pares.append((sobreposicao, indice, pessoa_id))
+                dt = max(0, min(agora - pessoa.visto, 1.0))
+                vx, vy = pessoa.velocidade
+                prevista = tuple(v + (vx if i % 2 == 0 else vy) * dt for i, v in enumerate(pessoa.caixa))
+                escala = max(pessoa.caixa[3] - pessoa.caixa[1], caixa[3] - caixa[1], 1)
+                distancia = math.hypot((caixa[0] + caixa[2] - prevista[0] - prevista[2]) / 2,
+                                      (caixa[1] + caixa[3] - prevista[1] - prevista[3]) / 2) / escala
+                sobreposicao = iou(caixa, prevista)
+                if sobreposicao >= .15 or distancia < .35:
+                    score = sobreposicao + .35 * max(0, 1 - distancia)
+                    pares.append((score, indice, pessoa_id))
+                    candidatos.setdefault(indice, []).append(score)
         ids = {}
         usados = set()
         for _, indice, pessoa_id in sorted(pares, reverse=True):
@@ -72,10 +95,19 @@ class RastreadorPessoas:
                 ids[indice] = pessoa_id
                 usados.add(pessoa_id)
         for indice, caixa in enumerate(caixas):
+            anterior = self.pessoas.get(ids.get(indice))
             if indice not in ids:
                 ids[indice] = self.proximo_id
                 self.proximo_id += 1
-            self.pessoas[ids[indice]] = Pessoa(tuple(caixa), agora)
+            velocidade = (0.0, 0.0)
+            if anterior and 0 < agora - anterior.visto <= self.tolerancia:
+                dt = agora - anterior.visto
+                velocidade = tuple((caixa[i] + caixa[i + 2] - anterior.caixa[i] - anterior.caixa[i + 2]) / (2 * dt) for i in (0, 1))
+            scores = sorted(candidatos.get(indice, []), reverse=True)
+            ambiguo = len(scores) > 1 and scores[0] - scores[1] < .15
+            # Caixas quase coincidentes não fornecem uma identidade confiável.
+            ambiguo |= any(j != indice and iou(caixa, outra) > .6 for j, outra in enumerate(caixas))
+            self.pessoas[ids[indice]] = Pessoa(tuple(caixa), agora, velocidade, ambiguo)
         return [ids[indice] for indice in range(len(caixas))]
 
 
@@ -92,27 +124,34 @@ class ConfirmadorAlertas:
         self.tolerancia = tolerancia
         self.observacoes = {}
         self.alertados = {}
+        self.avisados_continuos = set()
 
     def observar(self, chave, sinal, agora, duracao):
         if not sinal:
             self.observacoes.pop(chave, None)
+            self.avisados_continuos.discard(chave)
             return False
         estado = self.observacoes.get(chave)
         if estado is None or agora < estado.ultima or agora - estado.ultima > self.tolerancia:
             estado = Observacao(agora, agora)
             self.observacoes[chave] = estado
         else:
-            estado.ultima = agora
-            estado.quadros += 1
+            if agora > estado.ultima:
+                estado.ultima = agora
+                estado.quadros += 1
         return estado.quadros >= 3 and agora - estado.inicio >= duracao
 
     def pode_alertar(self, chave, agora):
+        if chave in self.avisados_continuos:
+            return False
         ultimo = self.alertados.get(chave)
         return ultimo is None or agora - ultimo >= self.intervalo
 
     def marcar_alerta(self, chaves, agora):
         for chave in chaves:
             self.alertados[chave] = agora
+            if chave in self.observacoes:
+                self.avisados_continuos.add(chave)
 
     def limpar_ausentes(self, presentes, existentes):
         # Uma pessoa perdida interrompe a confirmação, mesmo que o ID sobreviva.
@@ -124,6 +163,7 @@ class ConfirmadorAlertas:
             chave: valor for chave, valor in self.alertados.items()
             if chave[0] in existentes
         }
+        self.avisados_continuos.intersection_update(self.observacoes)
 
 
 def ponto_visivel(pontos, indice, confianca=0.6):
@@ -229,7 +269,7 @@ def regiao_verificavel(item, caixa, pontos, tamanho):
     return False
 
 
-def associar_epis(pessoas, deteccoes):
+def associar_epis(pessoas, deteccoes, ausencia=False):
     """Cada EPI é atribuído a no máximo uma pessoa, na região apropriada."""
     presentes = {p["id"]: set() for p in pessoas}
     ambiguos = {p["id"]: set() for p in pessoas}
@@ -241,11 +281,13 @@ def associar_epis(pessoas, deteccoes):
         "luvas": (0.2, 1.0, 0.6),
     }
     for deteccao in deteccoes:
-        item = identificar_epi(deteccao["classe"])
+        item = (identificar_ausencia if ausencia else identificar_epi)(deteccao["classe"])
         if item is None:
             continue
         confianca = deteccao.get("confianca", 1.0)
-        minimo = 0.15 if item == "oculos" else (0.25 if deteccao.get("local") else 0.5)
+        if not math.isfinite(confianca) or not 0 <= confianca <= 1:
+            continue
+        minimo = 0.15 if item == "oculos" else (0.25 if deteccao.get("local") and not ausencia else 0.5)
         if confianca < minimo:
             continue
         ex1, ey1, ex2, ey2 = deteccao["caixa"]
@@ -278,7 +320,7 @@ def associar_epis(pessoas, deteccoes):
         elif candidatos and confianca >= 0.5:
             presentes[candidatos[0][1]].add(item)
         elif candidatos:
-            # Evidência fraca bloqueia alerta; não comprova presença de EPI.
+            # Evidência fraca de óculos bloqueia alerta; não comprova presença.
             ambiguos[candidatos[0][1]].add(item)
     return presentes, ambiguos
 
@@ -289,7 +331,7 @@ def rotulo_monitoramento(pessoa):
     faltando = pessoa.get("epi_faltando", [])
     inconclusivos = [item for item, estado in estados.items() if estado == "inconclusivo"]
     observando = [item for item, estado in estados.items() if estado == "observando"]
-    linhas = [f"Pessoa {pessoa['id']} | {pessoa.get('postura') or 'Postura inconclusiva'}"]
+    linhas = [f"Pessoa {pessoa['id']} | {pessoa.get('situacao_rotulo') or pessoa.get('postura') or 'Postura inconclusiva'}"]
     for prefixo, itens in (("Possivel ausencia", faltando), ("EPI inconclusivo", inconclusivos),
                           ("Verificando EPI", observando)):
         if itens:
@@ -398,12 +440,18 @@ def postura_por_pontos(pontos, caixa):
 
 
 class MotorAlertas:
-    def __init__(self, confirmacao_epi=3, confirmacao_queda=2, intervalo=60):
+    def __init__(self, confirmacao_epi=3, confirmacao_queda=2, intervalo=60, chao_y=None,
+                 modo_ausencia="explicita"):
+        if not isinstance(modo_ausencia, str) or modo_ausencia not in MODOS_AUSENCIA:
+            raise ValueError("Modo de ausência inválido.")
+        self.modo_ausencia = modo_ausencia
         self.confirmacao_epi = confirmacao_epi
         self.confirmacao_queda = confirmacao_queda
         self.rastreador = RastreadorPessoas()
         self.confirmador = ConfirmadorAlertas(intervalo)
         self.processamento_anterior = 0
+        self.temporais = {}
+        self.chao_y = chao_y
 
     def avaliar(self, caixas, pontos, deteccoes_epi, obrigatorios, suportados, tamanho, agora,
                 processamento_segundos=None):
@@ -421,6 +469,9 @@ class MotorAlertas:
         pessoas = [{"id": pessoa_id, "caixa": tuple(caixa), "pontos": landmarks}
                    for pessoa_id, caixa, landmarks in zip(ids, caixas, pontos)]
         presentes, ambiguos = associar_epis(pessoas, deteccoes_epi)
+        ausentes, ausencia_ambigua = associar_epis(pessoas, deteccoes_epi, ausencia=True)
+        for pessoa_id in set(self.temporais) - set(ids):
+            self.temporais.pop(pessoa_id, None)  # Oclusão interrompe evidência temporal.
         alertas = []
         for pessoa, landmarks in zip(pessoas, pontos):
             pessoa.pop("pontos", None)
@@ -429,27 +480,33 @@ class MotorAlertas:
             pessoa.update(postura=postura["postura"], postura_angulo=postura["angulo"],
                           postura_motivo=postura["motivo"])
             chave_queda = (pessoa_id, "queda", "")
-            pessoa["queda_confirmada"] = self.confirmador.observar(
-                chave_queda, pessoa["postura"] == "Deitada", agora, self.confirmacao_queda
-            )
-            observacao = self.confirmador.observacoes.get(chave_queda)
-            pessoa["queda_quadros"] = observacao.quadros if observacao else 0
-            pessoa["queda_observada_segundos"] = round(agora - observacao.inicio, 1) if observacao else 0
+            incerto = self.rastreador.pessoas[pessoa_id].ambiguo
+            pessoa['rastreamento_confiavel'] = not incerto
+            temporal = self.temporais.setdefault(pessoa_id, AnaliseTemporal(confirmacao=self.confirmacao_queda, chao_y=self.chao_y))
+            if incerto:
+                temporal.interromper()
+            pessoa.update(temporal.avaliar({} if incerto else landmarks, pessoa['caixa'], postura, agora, tamanho[0],
+                                           intervalo_persistencia=tolerancia))
+            pessoa['queda_confirmada'] = pessoa['emergencia']  # Compatibilidade da API do painel.
             pessoa["queda_confirmacao_segundos"] = self.confirmacao_queda
-            if pessoa["queda_confirmada"] and self.confirmador.pode_alertar(chave_queda, agora):
+            if pessoa['novo_evento'] and self.confirmador.pode_alertar(chave_queda, agora):
                 alertas.append({"tipo": "queda", "pessoa_id": pessoa_id, "chaves": [chave_queda],
-                                "motivo": f"Pessoa {pessoa_id}: possível queda (postura deitada persistente)."})
+                                'classificacao': pessoa['situacao'], 'confirmacao': 'verificacao_humana_pendente',
+                                "motivo": f"Pessoa {pessoa_id}: {pessoa['situacao_rotulo']}. Verificar presencialmente; sem diagnóstico médico."})
             estados = {}
             motivos = {}
             chaves_epi = []
             for item in obrigatorios:
                 estado = "inconclusivo"
-                if item in suportados:
-                    if item in presentes[pessoa_id]:
+                if item in suportados and not incerto and landmarks.get('_imagem_adequada', True):
+                    conflito = item in presentes[pessoa_id] and item in ausentes[pessoa_id]
+                    if item in presentes[pessoa_id] and not conflito:
                         estado = "presente"
-                    elif item not in ambiguos[pessoa_id] and regiao_verificavel(
+                    elif (not conflito and (item in ausentes[pessoa_id] or self.modo_ausencia == "observacao")
+                          and item not in ambiguos[pessoa_id] and item not in ausencia_ambigua[pessoa_id]
+                          and regiao_verificavel(
                         item, pessoa["caixa"], landmarks, tamanho
-                    ):
+                    )):
                         estado = "observando"
                 chave = (pessoa_id, "epi", item)
                 confirmado = self.confirmador.observar(
@@ -463,20 +520,26 @@ class MotorAlertas:
                 if estado == "inconclusivo":
                     if item not in suportados:
                         motivo = "Detector indisponível para este item."
-                    elif (item in landmarks.get("_epi_local_necessarios", ())
-                          and item not in landmarks.get("_epi_local_avaliados", ())):
+                    elif incerto:
+                        motivo = "Associação da pessoa ambígua; confirmação interrompida."
+                    elif not landmarks.get('_imagem_adequada', True):
+                        motivo = "Pouca luz ou contraste na região necessária."
+                    elif (item in landmarks.get('_epi_local_necessarios', ())
+                          and item not in landmarks.get('_epi_local_avaliados', ())):
                         motivo = "Reanálise pendente ou com falha; ausência não confirmada."
-                    elif item == "oculos" and landmarks.get("_oculos_aux_indisponivel"):
+                    elif item == "oculos" and landmarks.get('_oculos_aux_indisponivel'):
                         motivo = "Detector auxiliar de óculos indisponível; ausência não confirmada."
-                    elif item in ambiguos[pessoa_id]:
+                    elif item in ambiguos[pessoa_id] or item in ausencia_ambigua[pessoa_id]:
                         motivo = "Evidência fraca ou associação ambígua; não comprova presença nem ausência."
-                    elif item == "oculos" and (ref := referencia_olhos(pessoa["caixa"], landmarks)) is not None:
-                        motivo = (f"Detalhe insuficiente para avaliar ausência de óculos ({ref[2]:.0f} px entre olhos; "
-                                  f"mínimo conservador: {MIN_OLHOS_AUSENCIA_OCULOS} px na imagem original)."
-                                  if ref[2] < MIN_OLHOS_AUSENCIA_OCULOS else
-                                  "Rosto inclinado, de perfil ou região dos olhos cortada; ausência não confirmada.")
+                    elif item in presentes[pessoa_id] and item in ausentes[pessoa_id]:
+                        motivo = "Detecções de presença e ausência em conflito."
+                    elif item == "oculos" and (ref := referencia_olhos(pessoa['caixa'], landmarks)) is not None and ref[2] < MIN_OLHOS_AUSENCIA_OCULOS:
+                        motivo = (f"Detalhe insuficiente: {ref[2]:.0f} px entre olhos na imagem original; "
+                                  f"mínimo conservador de {MIN_OLHOS_AUSENCIA_OCULOS} px para avaliar ausência.")
+                    elif not regiao_verificavel(item, pessoa['caixa'], landmarks, tamanho):
+                        motivo = "Região necessária sem visibilidade suficiente."
                     else:
-                        motivo = "Região necessária sem visibilidade suficiente; ausência não confirmada."
+                        motivo = "Sem evidência explícita de ausência; esse modo exige um modelo com classes negativas."
                     motivos[item] = motivo
             pessoa["epis"] = estados
             pessoa["epis_motivos"] = motivos
@@ -484,5 +547,6 @@ class MotorAlertas:
             if chaves_epi:
                 itens = ", ".join(chave[2] for chave in chaves_epi)
                 alertas.append({"tipo": "epi", "pessoa_id": pessoa_id, "chaves": chaves_epi,
+                                'confirmacao': 'verificacao_humana_pendente', 'epis': [c[2] for c in chaves_epi],
                                 "motivo": f"Pessoa {pessoa_id}: possível ausência de {itens}, persistente por {self.confirmacao_epi:g} s."})
         return pessoas, alertas

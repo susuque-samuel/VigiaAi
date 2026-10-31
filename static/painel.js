@@ -53,7 +53,7 @@ function mostrarPessoas(pessoas) {
     const card = document.createElement("article");
     card.className = "pessoa";
     const titulo = document.createElement("h3");
-    titulo.textContent = "Pessoa " + pessoa.id + " · " + (pessoa.postura === "Em pe" ? "Em pé" : pessoa.postura || "Postura inconclusiva");
+    titulo.textContent = "Pessoa " + pessoa.id + " · " + (pessoa.situacao_rotulo || (pessoa.postura === "Em pe" ? "Em pé" : pessoa.postura || "Postura inconclusiva"));
     card.append(titulo);
     Object.entries(pessoa.epis).forEach(([item, estado]) => {
       const badge = document.createElement("span");
@@ -62,11 +62,10 @@ function mostrarPessoas(pessoas) {
       card.append(badge);
     });
     Object.entries(pessoa.epis_motivos || {}).forEach(([item, motivo]) => {
-      if (pessoa.epis[item] !== "inconclusivo") return;
-      const explicacao = document.createElement("p");
-      explicacao.className = "muted small";
-      explicacao.textContent = nomes[item] + ": " + motivo;
-      card.append(explicacao);
+      if (pessoa.epis[item] !== 'inconclusivo') return;
+      const texto = document.createElement('p');
+      texto.className = 'muted small'; texto.textContent = nomes[item] + ': ' + motivo;
+      card.append(texto);
     });
     if (!Object.keys(pessoa.epis).length) {
       const texto = document.createElement("p");
@@ -78,7 +77,9 @@ function mostrarPessoas(pessoas) {
     leitura.className = "muted small";
     const angulo = Number.isFinite(pessoa.postura_angulo)
       ? "Inclinação do tronco: " + pessoa.postura_angulo + "°. " : "";
-    if (!pessoa.postura) {
+    if (pessoa.situacao_motivo) {
+      leitura.textContent = pessoa.situacao_motivo + (pessoa.emergencia ? " Verificação humana pendente." : "");
+    } else if (!pessoa.postura) {
       leitura.textContent = angulo + (pessoa.postura_motivo || "Corpo sem visibilidade suficiente.");
     } else if (pessoa.postura === "Deitada") {
       leitura.textContent = angulo + (pessoa.queda_confirmada ? "Possível queda confirmada para alerta."
@@ -106,13 +107,16 @@ function mostrarEventos(eventos) {
   eventos.forEach((evento) => {
     const linha = area.insertRow();
     linha.insertCell().textContent = evento.data;
-    linha.insertCell().textContent = evento.motivo;
-    const link = document.createElement("a");
-    link.href = "/capturas/" + encodeURIComponent(evento.arquivo);
-    link.target = "_blank";
-    link.rel = "noopener";
-    link.textContent = "Ver imagem";
-    linha.insertCell().append(link);
+    linha.insertCell().textContent = evento.motivo + (evento.confirmacao === 'verificacao_humana_pendente' ? ' · Verificação humana pendente.' : '');
+    const imagem = linha.insertCell();
+    if (evento.arquivo) {
+      const link = document.createElement("a");
+      link.href = "/capturas/" + encodeURIComponent(evento.arquivo);
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "Ver imagem";
+      imagem.append(link);
+    } else imagem.textContent = "Imagem desativada";
     linha.insertCell().textContent = evento.email;
   });
 }
@@ -137,17 +141,21 @@ async function atualizarStatus() {
   if (status.epi_obrigatorio.includes("oculos")) {
     if (status.oculos_ativo) elemento("epiStatus").textContent += " Óculos: verificação adicional ativa.";
     if (status.oculos_erro) elemento("epiStatus").textContent += " " + status.oculos_erro;
-    elemento("epiStatus").textContent += " Perfil, pouco detalhe ou evidência fraca deixam a leitura inconclusiva; isso não significa EPI presente.";
+    elemento("epiStatus").textContent += " Perfil ou evidência fraca de óculos deixam a leitura inconclusiva.";
   }
   if (status.epi_ativo && (status.epi_reanalises || status.epi_pessoas_pendentes)) {
-    elemento("epiStatus").textContent += " Reanálise por pessoa: " + (status.epi_reanalises || 0) + " neste quadro (limite de 4).";
-    if (status.epi_pessoas_pendentes) elemento("epiStatus").textContent += " Aguardando reanálise: " + status.epi_pessoas_pendentes + ".";
-    if (status.epi_reanalise_erro) elemento("epiStatus").textContent += " " + status.epi_reanalise_erro + ".";
-    elemento("epiStatus").textContent += " Imagem pequena ou reanálise pendente não comprovam ausência.";
+    elemento('epiStatus').textContent += ' Reanálise por pessoa: ' + (status.epi_reanalises || 0) + ' (limite de 4).';
+    if (status.epi_pessoas_pendentes) elemento('epiStatus').textContent += ' Aguardando reanálise: ' + status.epi_pessoas_pendentes + '.';
+    if (status.epi_reanalise_erro) elemento('epiStatus').textContent += ' ' + status.epi_reanalise_erro;
+    elemento('epiStatus').textContent += ' Imagem pequena ou pendências não comprovam ausência.';
   }
+  elemento('epiStatus').textContent += status.modo_ausencia === 'explicita'
+    ? ' Modo explícito: requer classes negativas, ausentes nos pesos atuais.'
+    : ' Modo observação: possíveis avisos conservadores; exigem verificação humana.';
   if (!politicaCarregada) {
     document.querySelectorAll('input[name="epi"]').forEach((input) => { input.checked = status.epi_obrigatorio.includes(input.value); });
     elemento("confirmacao").value = status.confirmacao_segundos;
+    elemento('modoAusencia').value = status.modo_ausencia || 'observacao';
     politicaCarregada = true;
   }
   mostrarPessoas(status.deteccoes);
@@ -234,6 +242,7 @@ elemento("formEpi").addEventListener("submit", (evento) => {
   evento.preventDefault();
   acao("/configurar-epi", {
     obrigatorios: Array.from(document.querySelectorAll('input[name="epi"]:checked'), (input) => input.value),
+    modo_ausencia: elemento('modoAusencia').value,
     confirmacao_segundos: Number(elemento("confirmacao").value)
   });
 });

@@ -1,160 +1,164 @@
-# VigiaAI
+# VigiaAI — Central integrada
 
-Painel local em Flask para monitoramento por câmera, indicação de possíveis
-quedas, verificação de EPIs selecionados e notificações por e-mail.
+Monitoramento local de pessoas, possíveis quedas e EPIs selecionados, com câmera,
+vídeos gravados, coleta de amostras e notificações por e-mail.
 
-Esta versão inclui o código atual e os três modelos necessários. Não inclui
-`.venv`, senhas, imagens de pessoas, dataset de treinamento ou backups locais.
-O repositório é público: não adicione esses arquivos em commits futuros.
+A atualização de 31/10/2026 reúne a Central 2.1 e as correções locais de reanálise
+de EPI, óculos e baixa cadência. Os três modelos foram preservados; não houve novo
+treinamento nem comprovação de ganho de precisão industrial.
+
+## Executar no computador já preparado
+
+Na pasta principal do projeto:
+
+```powershell
+.\iniciar_vigiaai.ps1 -CPU -Porta 5001
+```
+
+Alternativa sem executar o arquivo PowerShell:
+
+```powershell
+$env:VIGIAAI_DEVICE = 'cpu'
+$env:VIGIAAI_PORTA = '5001'
+.\.venv\Scripts\python.exe main.py
+```
+
+Abra **http://127.0.0.1:5001**. Na Central, selecione **Câmera ao vivo**, clique em
+**Buscar câmeras**, escolha o dispositivo e inicie. O painel clássico e a coleta
+continuam em **http://127.0.0.1:5001/legado**. Também é possível enviar uma gravação
+local, pausar, buscar trechos e reiniciar a análise.
+
+Encerre com `Ctrl+C`. Se outra versão já estiver usando a porta ou a câmera, encerre-a
+antes de iniciar esta. O servidor aceita somente acesso local, sem autenticação.
+As duas telas compartilham uma análise por processo.
+
+O iniciador procura `VIGIAAI_PYTHON`, depois o arquivo privado `.runtime-python`,
+depois a `.venv` da própria pasta. Na atualização deste computador, a `.venv`
+existente foi mantida, sem reinstalar pacotes. Preserve também seu `.env` e
+`config_epi.json`; não substitua suas credenciais por valores do exemplo.
 
 ## Instalar em outro computador Windows
 
-Use **Python 3.12 de 64 bits**, Git e uma conexão com a internet. Não copie
-a `.venv` do computador antigo. Extraia ou clone o projeto no SSD do novo PC.
-
-No PowerShell:
+Use Python 3.12 de 64 bits. Transfira o código pelo Git; recrie o ambiente em vez de
+copiar os milhares de arquivos da `.venv`. Em uma instalação nova, no PowerShell:
 
 ```powershell
 git clone --depth 1 https://github.com/susuque-samuel/VigiaAi.git
 cd VigiaAi
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements-cpu.txt
 .\.venv\Scripts\python.exe -m pip check
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
-```
-
-A cópia do `.env` acima é apenas para uma instalação nova. Se o arquivo já
-existir, não o sobrescreva. Complete os dados de câmera e e-mail antes de usar.
-Também pode transferir o `.env` antigo por um meio privado, sem publicá-lo.
-
-Inicie o sistema:
-
-```powershell
 .\.venv\Scripts\python.exe main.py
 ```
 
-Abra <http://127.0.0.1:5000> e clique em iniciar. Para escolher a câmera,
-ajuste `CAMERA_INDEX` no `.env` e reinicie o servidor. Os índices podem mudar
-entre computadores. Não é necessário ativar
-a `.venv` nem alterar a política de execução do PowerShell.
-
-Os comandos acima instalam PyTorch para **CPU**. Uma placa NVIDIA só será
-usada com uma instalação de PyTorch/CUDA compatível com a placa e seu driver;
-não basta transferir o código. Consulte o [instalador oficial do PyTorch](https://pytorch.org/get-started/locally/)
-antes de alterar as versões de `torch` e `torchvision` deste projeto.
-
-## Atualizar o sistema em outro computador
-
-Pare o servidor com `Ctrl+C` antes de atualizar. Dentro de um clone deste
-repositório, sem alterações locais pendentes:
-
-```powershell
-git pull --ff-only
-.\.venv\Scripts\python.exe main.py
-```
-
-Depois atualize a página com `Ctrl+F5`. O `.env` e `config_epi.json` privados
-permanecem no computador. Se você alterou arquivos de código manualmente,
-preserve suas alterações antes de atualizar; não use comandos de descarte.
-Para instalações baixadas em ZIP, extraia a versão nova em outra pasta e
-transfira apenas o `.env` e a configuração privada, recriando a `.venv` nela.
-
-O ajuste de 20/10/2026 corrige a classificação de posturas ambíguas, melhora
-o enquadramento da pose e considera a duração do processamento na confirmação.
-O painel mostra a inclinação estimada e o progresso de confirmação da possível
-queda. Não houve mudança das dependências nem dos pesos nesta correção.
-Leia os limites e testes em [Monitoramento e coleta](MONITORAMENTO_E_COLETA.md#correção-da-avaliação-de-quedas-em-20102026).
-
-A atualização de 21/10/2026 também publica os ajustes de EPIs que estavam
-somente no computador de origem: reanálise por pessoa, incluindo o detector
-auxiliar de óculos, confirmação de ausência mais conservadora e motivos das
-leituras inconclusivas no painel. A imagem usa amarelo para incerteza e separa
-os avisos em linhas. Há limite de quatro pessoas reanalisadas por quadro; isso
-pode reduzir o FPS. Os pesos e as dependências continuam os mesmos.
-
-O ajuste reduz falsos alertas, mas não constitui novo treinamento. Os modelos
-ainda falham com alguns óculos e condições de câmera: **inconclusivo não significa
-EPI presente**. Consulte os testes e as limitações em
-[Monitoramento e coleta](MONITORAMENTO_E_COLETA.md).
-
-## Configurar o `.env`
-
-| Variável | Conteúdo |
-| --- | --- |
-| `CAMERA_INDEX` | Índice da câmera, como `0`, `1` ou `2`. Reinicie o servidor após alterar. |
-| `COOLDOWN_SEGUNDOS` | Intervalo mínimo entre alertas da mesma pessoa, tipo e EPI. |
-| `EPI_CONFIRMACAO_SEGUNDOS` | Tempo inicial para confirmar uma possível ausência. A política salva no painel tem prioridade. |
-| `QUEDA_CONFIRMACAO_SEGUNDOS` | Tempo para confirmar a postura deitada antes do alerta de possível queda. |
-| `EPI_MODEL_PATH` | Opcional: caminho do modelo principal; padrão `epi.pt`. |
-| `OCULOS_MODEL_PATH` | Modelo adicional dos óculos, incluído em `runs/detect/treinamento_epi-2/weights/best.pt`. |
-| `SMTP_HOST` | Servidor SMTP, por exemplo `smtp.gmail.com`. |
-| `SMTP_PORTA` | Porta SMTP com SSL, normalmente `465`. |
-| `EMAIL_REMETENTE` | Endereço da conta que enviará os alertas. |
-| `EMAIL_DESTINATARIO` | Endereço que receberá os alertas. |
-| `SMTP_SENHA` | Senha de aplicativo da conta remetente, não a senha comum da conta. |
-
-Para preservar a seleção dos EPIs e o tempo configurado no painel, copie
-`config_epi.json` do computador antigo por um meio privado. Sem esse arquivo,
-selecione novamente os itens e clique em salvar política. Reinicie o servidor
-após alterar o `.env`.
-
-## Modelos incluídos
+Use um caminho sem acentos para o ambiente por compatibilidade com os recursos nativos
+do MediaPipe. Complete o `.env` privadamente. Os índices de câmera variam por computador;
+escolha o dispositivo no painel. Os pesos necessários já estão nos caminhos esperados:
 
 | Arquivo | Função |
 | --- | --- |
-| `yolov8n.pt` | Detecção de pessoas. |
-| `epi.pt` | Modelo principal de capacete, colete, óculos, luvas e máscara. |
-| `runs/detect/treinamento_epi-2/weights/best.pt` | Segunda verificação, apenas para óculos. |
+| `yolov8n.pt` | Pessoas. |
+| `epi.pt` | Capacete, colete, óculos, luvas e máscara. |
+| `runs/detect/treinamento_epi-2/weights/best.pt` | Segunda verificação de óculos. |
 
-Mantenha esses caminhos ao copiar manualmente. A instalação não depende das
-demais pastas de treinamento. Os modelos podem falhar conforme distância,
-iluminação, posição e oclusões. Uma indicação inconclusiva não comprova ausência
-de EPI e não gera alerta de EPI. A postura deitada é apenas um indício de
-possível queda, não uma confirmação de acidente.
+O ambiente local usado na integração tem Python 3.12.10 e PyTorch 2.6.0+cpu.
+Uma instalação limpa em outro computador e CUDA não foram validadas nesta etapa.
+`requirements-cuda.txt` é uma alternativa que exige GPU/driver compatíveis; não
+instale sobre o ambiente funcional sem revisar as versões. `VIGIAAI_DEVICE=auto`
+seleciona GPU disponível ou CPU; `cpu` força CPU.
 
-## Testes e treinamento
+## Política de EPI e alertas
 
-Os testes não usam câmera nem enviam e-mail:
+Escolha os itens no painel, o tempo de confirmação e a regra de ausência:
+
+| Regra | Comportamento |
+| --- | --- |
+| **Observação conservadora** (padrão) | Possíveis avisos após região visível, detalhe suficiente, reanálise e confirmação em vários quadros. É hipótese sujeita a falso alerta; exige verificação humana. |
+| **Exigir classe explícita de ausência** | Exige detecção negativa, como `no_helmet`. Os pesos atuais só têm classes positivas e não produzirão avisos de ausência nesse modo. |
+
+A política salva tem prioridade sobre os valores iniciais `EPI_MODO_AUSENCIA` e
+`EPI_CONFIRMACAO_SEGUNDOS` do `.env`. São necessárias pelo menos três observações válidas;
+o tempo configurado não garante aviso imediato.
+
+A reanálise usa recortes de pessoa/cabeça, até quatro pessoas por rodada. Erro ou
+pendência bloqueia possível ausência. Evidência fraca, pouca luz, perfil inadequado,
+associação ambígua e detalhe pequeno aparecem como inconclusivos, com o motivo.
+Isso não comprova pessoa equipada. Ampliar o recorte não recupera detalhe perdido;
+óculos comuns/protetores ainda dependem de dados revisados e validação independente.
+
+A análise temporal distingue transição suspeita, pessoa encontrada deitada/imóvel e
+postura deitada persistente em baixa cadência. Esta última exige três observações e
+pelo menos cinco segundos (ou confirmação maior configurada), sem afirmar que observou
+queda ou imobilidade entre quadros espaçados. Perda da pessoa/pose e pausas excessivas
+reiniciam a confirmação. São indicações visuais para verificação humana, sem diagnóstico.
+
+**Câmera ao vivo:** Central e painel clássico respeitam o SMTP privado,
+`NOTIFICACOES_ATIVAS=1` e `VIGIAAI_TESTE=0`. `SALVAR_IMAGEM_OCORRENCIA=0` permite
+registro sem foto. Configure `SMTP_HOST`, `SMTP_PORTA`, `EMAIL_REMETENTE`,
+`EMAIL_DESTINATARIO` e `SMTP_SENHA` (senha de aplicativo) no `.env`.
+
+**Vídeos gravados:** não enviam e-mails nem salvam fotos de ocorrências, mesmo com
+SMTP configurado. O evento mantém a indicação de simulação após trocar a fonte.
+Os últimos 200 registros ficam em memória; exporte o JSON para guardá-los antes de
+reiniciar. Os quadros não são enviados a serviços externos de IA.
+
+## Backup e atualização
+
+A versão anterior está na branch
+[`codex/backup-antes-integracao-20261031`](https://github.com/susuque-samuel/VigiaAi/tree/codex/backup-antes-integracao-20261031).
+Ela preserva o código anterior deste computador, incluindo alterações locais.
+O commit publicado anterior `f8ef003` continua no histórico.
+
+O backup privado local `VigiaAi-backup-20261031` contém também credenciais, dataset,
+capturas e **1.345 fotos de amostras de EPI**, seus metadados e o RAR existente.
+Esses dados e a `.venv` **não são publicados**. O histórico Git local antigo,
+que rastreava o ambiente Python, fica guardado separadamente no backup privado.
+
+Para atualizar um clone sem alterações de código pendentes, pare o servidor e execute
+`git pull --ff-only`. As configurações e amostras ignoradas permanecem no computador.
+Se houver mudanças manuais, preserve-as antes; não use descarte forçado.
+
+Para consultar o código antigo em outro computador:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+git clone --branch codex/backup-antes-integracao-20261031 --single-branch https://github.com/susuque-samuel/VigiaAi.git VigiaAi-anterior
 ```
 
-São 79 testes Python nesta versão. Para os quatro testes de apresentação do
-painel em memória, sem servidor separado, execute:
+Reaproveite um ambiente compatível e suas configurações privadas para executar esse
+backup. Ele não inclui fotos ou senhas; o sistema anterior usa a porta 5000 por padrão.
+As instruções completas de restauração local ficam no `LEIA-ME.txt` do backup privado.
+
+## Verificação e treinamento
+
+A integração passou em **152 testes Python e 6 testes JavaScript**, com câmera e
+SMTP simulados. A interface foi conferida no navegador. Os modelos reais também
+processaram uma amostra local em três quadros, sem alterar a imagem. Isso verifica
+execução, não mede precisão ou desempenho em campo. Câmera física e entrega real
+de e-mail ainda precisam ser validadas na instalação.
 
 ```powershell
-node --test tests/test_painel_oculos.mjs
+.\.venv\Scripts\python.exe tests/validar_integracao.py
+$env:VIGIAAI_PYTHON = (Resolve-Path .\.venv\Scripts\python.exe).Path
+$env:VIGIAAI_TESTE = '1'
+$env:NOTIFICACOES_ATIVAS = '0'
+node --test tests/test_painel.mjs tests/test_central.mjs tests/test_painel_oculos.mjs
 ```
 
-Para o teste opcional do controlador JavaScript, instale Node.js e execute
-`.\.venv\Scripts\python.exe tests/servidor_demo.py` em outro terminal.
-Depois rode `node --test tests/test_painel.mjs`. O servidor simulado usa a porta
-5001 e deve ser encerrado ao final.
+Feche esse terminal de testes antes de voltar à operação normal: as variáveis acima
+desativam notificações. O validador Python bloqueia SMTP real e dispositivos físicos.
 
-O script `treinar_epi.py` e `dataset_epi/data.yaml` estão incluídos, mas fotos
-e anotações não são publicadas. Para treinar, transfira privadamente
-`dataset_epi/images/` e `dataset_epi/labels/`, preservando `train` e `val`:
+`avaliar_eventos.py` separa queda/EPI, com filtro opcional `--tipo`; referências
+antigas sem tipo significam queda. As amostras não foram rotuladas automaticamente
+nem convertidas em treino. O dataset antigo sem teste independente pode ser recusado
+pela auditoria nova; prepare uma divisão revisada antes de treinar.
 
-```powershell
-.\.venv\Scripts\python.exe treinar_epi.py --somente-auditar
-```
+Base da Central: `Livrinhos/VigiaA-i2.0`, branch `vigiaai-2.1-interface`, commit
+`e5d9394a2b9f08a5c476bdbdb2cd1adff507e529`, reunida às correções locais de Samuel.
+Os pesos publicados pelo amigo são os mesmos dos arquivos locais.
 
-Leia [Monitoramento e coleta](MONITORAMENTO_E_COLETA.md) e
-[Treinamento de EPI](TREINAMENTO_EPI.md). Os backups e resultados antigos
-mencionados nesses documentos permanecem apenas no computador de origem.
-A [documentação anterior](docs/README_ORIGINAL.md) foi preservada como histórico;
-para instalar e usar a versão atual, siga este README.
-
-## Uso local e dados privados
-
-O aplicativo inicia somente em `127.0.0.1:5000`. Não exponha esse servidor
-diretamente à internet: o painel atual não implementa autenticação de usuários.
-As capturas e fotos coletadas ficam no computador e estão ignoradas pelo Git;
-ocorrências podem enviar imagens ao destinatário configurado no `.env`.
-
-Para futuras alterações neste clone, revise `git status` e o conteúdo dos
-arquivos antes de fazer commit. Não reutilize o histórico Git antigo que
-incluía a `.venv` e não use `git add -f` para arquivos privados.
+Detalhes e histórico: [Central](docs/CENTRAL_2_1.md), [IA](docs/APRIMORAMENTO_IA.md),
+[monitoramento/coleta](MONITORAMENTO_E_COLETA.md), [treinamento](TREINAMENTO_EPI.md) e
+[fontes de dados](docs/DATASETS_IA.md). Para esta atualização, este README tem prioridade
+sobre os relatos antigos.
